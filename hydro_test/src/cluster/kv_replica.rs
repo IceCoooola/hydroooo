@@ -14,7 +14,7 @@ impl<K: Serialize + DeserializeOwned + Hash + Eq + Clone + Debug> KvKey for K {}
 pub trait KvValue: Serialize + DeserializeOwned + Eq + Clone + Debug {}
 impl<V: Serialize + DeserializeOwned + Eq + Clone + Debug> KvValue for V {}
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Debug, Hash)]
 pub struct KvPayload<K, V> {
     pub key: K,
     pub value: V,

@@ -29,7 +29,7 @@ pub struct PaxosConfig {
 }
 
 pub trait PaxosPayload: Serialize + DeserializeOwned + PartialEq + Eq + Clone + Debug {}
-impl<T: Serialize + DeserializeOwned + PartialEq + Eq + Clone + Debug> PaxosPayload for T {}
+impl<T: Serialize + DeserializeOwned + PartialEq + Eq + Clone + Debug + Hash> PaxosPayload for T {}
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Copy, Clone, Debug, Hash)]
 pub struct Ballot {
