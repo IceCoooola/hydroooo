@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
-use hydro_lang::dfir_rs::tracing::Instrument;
 use hydro_lang::*;
 use hydro_std::quorum::{collect_quorum, collect_quorum_with_response};
 use hydro_std::request_response::join_responses;
@@ -12,16 +11,16 @@ use super::paxos::PaxosPayload;
 use super::paxos_with_client::PaxosLike;
 use std::collections::hash_map::DefaultHasher;
 use super::pbft as helper;
-use super::bench_client::{bench_client, Client};
 use super::kv_replica::Replica;
 
 // pub struct Replica {}
 
 //unwrap_or. 
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
-    let mut s = DefaultHasher::new();
-    t.hash(&mut s);
-    s.finish()
+    // let mut s = DefaultHasher::new();
+    // t.hash(&mut s);
+    // s.finish()
+    0
 } 
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Copy, Clone, Debug, Hash, Ord, PartialOrd)]
@@ -129,8 +128,6 @@ pub struct PbftConfig {
 
 pub struct CorePbft<'a> {
     pub replicas: Cluster<'a, Replica>,
-    pub view_checkpoint:
-        Stream<(ClusterId<Replica>, usize), Cluster<'a, Replica>, Unbounded, NoOrder>,
     pub pbft_config: PbftConfig,
 }
 
@@ -138,9 +135,14 @@ pub struct CorePbft<'a> {
 impl<'a> PaxosLike<'a> for CorePbft<'a> {
     type PaxosIn = Replica;
     type PaxosOut = Replica;
+    type PaxosLog = Replica;
     type Ballot = ViewChange; 
 
     fn payload_recipients(&self) -> &Cluster<'a, Self::PaxosIn> {
+        &self.replicas
+    }
+
+    fn log_stores(&self) -> &Cluster<'a, Self::PaxosLog> {
         &self.replicas
     }
 
@@ -152,15 +154,16 @@ impl<'a> PaxosLike<'a> for CorePbft<'a> {
 
     unsafe fn build<P: PaxosPayload>(
         self,
-        with_ballot: impl FnOnce(
-            Stream<ViewChange, Cluster<'a, Self::PaxosIn>, Unbounded>,
+        payload_generator: impl FnOnce(
+            Stream<Self::Ballot, Cluster<'a, Self::PaxosIn>, Unbounded>,
         ) -> Stream<P, Cluster<'a, Self::PaxosIn>, Unbounded>,
+        checkpoints: Optional<usize, Cluster<'a, Self::PaxosLog>, Unbounded>,
     ) -> Stream<(usize, Option<P>), Cluster<'a, Self::PaxosOut>, Unbounded, NoOrder> {
         unsafe {
             pbft_core(
                 &self.replicas,
-                self.view_checkpoint,
-                with_ballot,
+                checkpoints,
+                payload_generator,
                 self.pbft_config,
             )
         }
@@ -512,7 +515,7 @@ impl<'a> PaxosLike<'a> for CorePbft<'a> {
 
 pub unsafe fn pbft_core<'a, P: PaxosPayload>(
     replicas: &Cluster<'a, Replica>,
-    view_checkpoint: Stream<(ClusterId<Replica>, usize), Cluster<'a, Replica>, Unbounded, NoOrder>,
+    view_checkpoint: Optional<usize, Cluster<'a, Replica>, Unbounded>,
     c_to_primary: impl FnOnce(
         Stream<ViewChange, Cluster<'a, Replica>, Unbounded>,
     ) -> Stream<P, Cluster<'a, Replica>, Unbounded>,

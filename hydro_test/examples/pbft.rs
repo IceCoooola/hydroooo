@@ -1,11 +1,52 @@
 use hydro_deploy::Deployment;
 use hydro_lang::{deploy::TrybuildHost, Cluster};
-use hydro_test::cluster::{bench_client::Client, pbft::{CorePbft, PbftConfig}};
+use hydro_test::cluster::{pbft::{CorePbft, PbftConfig}};
+
+use std::sync::Arc;
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[command(flatten)]
+    graph: GraphConfig,
+
+    /// Use GCP for deployment (provide project name)
+    #[arg(long)]
+    gcp: Option<String>,
+}
+use hydro_deploy::gcp::GcpNetwork;
+use hydro_deploy::{Host};
+use hydro_lang::graph_util::GraphConfig;
+use hydro_test::cluster::paxos::{CorePaxos, PaxosConfig};
+use tokio::sync::RwLock;
+
+type HostCreator = Box<dyn Fn(&mut Deployment) -> Arc<dyn Host>>;
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
     let mut deployment = Deployment::new();
-    let _localhost = deployment.Localhost();
+
+    let create_host: HostCreator = if let Some(project) = &args.gcp {
+        let network = Arc::new(RwLock::new(GcpNetwork::new(project, None)));
+        let project = project.clone();
+
+        Box::new(move |deployment| -> Arc<dyn Host> {
+            deployment
+                .GcpComputeEngineHost()
+                .project(&project)
+                .machine_type("n2-standard-4")
+                .image("debian-cloud/debian-11")
+                .region("us-central1-c")
+                .network(network.clone())
+                .add()
+        })
+    } else {
+        let localhost = deployment.Localhost();
+        Box::new(move |_| -> Arc<dyn Host> { localhost.clone() })
+    };
 
     let builder = hydro_lang::FlowBuilder::new();
     let f = 1;
@@ -17,20 +58,17 @@ async fn main() {
     let i_am_leader_check_timeout = 10; // Sec
     let i_am_leader_check_timeout_delay_multiplier = 15;
 
-    // let clients:Cluster<'_, Client> = builder.cluster();
     let replicas = builder.cluster();
-    // TODO: here, replicas declared inside pbft_bench.
+    let clients = builder.cluster();
+    let client_aggregator = builder.process();
 
-    let clients = hydro_test::cluster::pbft_bench::pbft_bench(
-        &builder,
+    hydro_test::cluster::pbft_bench::pbft_bench(
         num_clients_per_node,
-        median_latency_window_size,
         checkpoint_frequency,
         f,
         3 * f + 1,
-        |replica_checkpoint| CorePbft {
+        CorePbft {
             replicas: replicas.clone(),
-            view_checkpoint: replica_checkpoint.broadcast_bincode(&replicas),
             pbft_config: PbftConfig {
                 f,
                 i_am_leader_send_timeout,
@@ -38,19 +76,27 @@ async fn main() {
                 i_am_leader_check_timeout_delay_multiplier,
             },
         },
-        replicas.clone()
+        &clients,
+        &client_aggregator,
+        &replicas,
     );
 
-    let _rustflags = "-C opt-level=3 -C codegen-units=1 -C strip=none -C debuginfo=2 -C lto=off";
+    let rustflags = "-C opt-level=3 -C codegen-units=1 -C strip=none -C debuginfo=2 -C lto=off";
 
     let _nodes = builder
         .with_cluster(
             &replicas,
-            (0..(3 * f + 1)).map(|_| TrybuildHost::new(deployment.Localhost())),
+            (0..(3*f + 1))
+                .map(|_| TrybuildHost::new(create_host(&mut deployment)).rustflags(rustflags)),
         )
         .with_cluster(
             &clients,
-            (0..num_clients).map(|_| TrybuildHost::new(deployment.Localhost())),
+            (0..num_clients)
+                .map(|_| TrybuildHost::new(create_host(&mut deployment)).rustflags(rustflags)),
+        )
+        .with_process(
+            &client_aggregator,
+            TrybuildHost::new(create_host(&mut deployment)).rustflags(rustflags),
         )
         .deploy(&mut deployment);
 

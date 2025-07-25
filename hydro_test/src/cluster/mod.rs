@@ -12,3 +12,4 @@ pub mod simple_cluster;
 pub mod two_pc;
 pub mod two_pc_bench;
 pub mod pbft;
+pub mod pbft_bench;

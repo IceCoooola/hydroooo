@@ -28,7 +28,7 @@ pub struct PaxosConfig {
     pub i_am_leader_check_timeout_delay_multiplier: usize,
 }
 
-pub trait PaxosPayload: Serialize + DeserializeOwned + PartialEq + Eq + Clone + Debug {}
+pub trait PaxosPayload: Serialize + DeserializeOwned + PartialEq + Eq + Clone + Debug + Hash {}
 impl<T: Serialize + DeserializeOwned + PartialEq + Eq + Clone + Debug + Hash> PaxosPayload for T {}
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Copy, Clone, Debug, Hash)]
